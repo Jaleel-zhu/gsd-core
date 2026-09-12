@@ -28,7 +28,7 @@ import path from 'node:path';
  * Validate that a file path resolves within an allowed base directory.
  * Prevents path traversal attacks via ../ sequences, symlinks, or absolute paths.
  */
-export function validatePath(filePath: unknown, baseDir: unknown, opts: { allowAbsolute?: boolean } = {}): { safe: boolean; resolved: string; error?: string } {
+function validatePath(filePath: unknown, baseDir: unknown, opts: { allowAbsolute?: boolean } = {}): { safe: boolean; resolved: string; error?: string } {
   if (!filePath || typeof filePath !== 'string') {
     return { safe: false, resolved: '', error: 'Empty or invalid file path' };
   }

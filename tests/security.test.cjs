@@ -13,7 +13,6 @@ const { runGsdTools, createTempProject, cleanup } = require('./helpers.cjs');
 const fc = require('./helpers/fast-check-setup.cjs');
 
 const {
-  validatePath,
   requireSafePath,
   scanForInjection,
   sanitizeForPrompt,
@@ -30,72 +29,71 @@ const {
 
 // ─── Path Traversal Prevention ──────────────────────────────────────────────
 
-describe('validatePath', () => {
+describe('assertWithinRoot / tryWithinRoot — engine invariance', () => {
   const base = '/projects/my-app';
 
   test('allows relative paths within base', () => {
-    const result = validatePath('src/index.js', base);
-    assert.ok(result.safe);
-    assert.equal(result.resolved, path.resolve(base, 'src/index.js'));
+    const r = tryWithinRoot('src/index.js', base);
+    assert.ok(r !== null);
+    assert.equal(r, path.resolve(base, 'src/index.js'));
   });
 
   test('allows nested relative paths', () => {
-    const result = validatePath('.planning/phases/01-setup/PLAN.md', base);
-    assert.ok(result.safe);
+    const r = tryWithinRoot('.planning/phases/01-setup/PLAN.md', base);
+    assert.ok(r !== null);
   });
 
   test('rejects ../ traversal escaping base', () => {
-    const result = validatePath('../../etc/passwd', base);
-    assert.ok(!result.safe);
-    assert.ok(result.error.includes('escapes allowed directory'));
+    assert.throws(
+      () => assertWithinRoot('../../etc/passwd', base, 'test'),
+      /escapes allowed directory/,
+    );
   });
 
   test('rejects absolute paths by default', () => {
-    const result = validatePath('/etc/passwd', base);
-    assert.ok(!result.safe);
-    assert.ok(result.error.includes('Absolute paths not allowed'));
+    assert.throws(
+      () => assertWithinRoot('/etc/passwd', base, 'test'),
+      /Absolute paths not allowed/,
+    );
   });
 
   test('allows absolute paths within base when opted in', () => {
-    const result = validatePath(path.join(base, 'src/file.js'), base, { allowAbsolute: true });
-    assert.ok(result.safe);
+    const r = tryWithinRoot(path.join(base, 'src/file.js'), base, { allowAbsolute: true });
+    assert.ok(r !== null);
   });
 
   test('rejects absolute paths outside base even when opted in', () => {
-    const result = validatePath('/etc/passwd', base, { allowAbsolute: true });
-    assert.ok(!result.safe);
+    assert.equal(tryWithinRoot('/etc/passwd', base, { allowAbsolute: true }), null);
   });
 
   test('rejects null bytes', () => {
-    const result = validatePath('src/\0evil.js', base);
-    assert.ok(!result.safe);
-    assert.ok(result.error.includes('null bytes'));
+    assert.throws(
+      () => assertWithinRoot('src/\0evil.js', base, 'test'),
+      /null bytes/,
+    );
   });
 
   test('rejects empty path', () => {
-    const result = validatePath('', base);
-    assert.ok(!result.safe);
+    assert.equal(tryWithinRoot('', base), null);
   });
 
   test('rejects non-string path', () => {
-    const result = validatePath(42, base);
-    assert.ok(!result.safe);
+    assert.equal(tryWithinRoot(42, base), null);
   });
 
   test('handles . and ./ correctly (stays in base)', () => {
-    const result = validatePath('.', base);
-    assert.ok(result.safe);
-    assert.equal(result.resolved, path.resolve(base));
+    const r = tryWithinRoot('.', base);
+    assert.ok(r !== null);
+    assert.equal(r, path.resolve(base));
   });
 
   test('handles complex traversal like src/../../..', () => {
-    const result = validatePath('src/../../../etc/shadow', base);
-    assert.ok(!result.safe);
+    assert.equal(tryWithinRoot('src/../../../etc/shadow', base), null);
   });
 
   test('allows path that resolves back into base after ..', () => {
-    const result = validatePath('src/../lib/file.js', base);
-    assert.ok(result.safe);
+    const r = tryWithinRoot('src/../lib/file.js', base);
+    assert.ok(r !== null);
   });
 
   // ─── Dangling symlink + non-canonical base regression coverage ───────────
@@ -149,9 +147,8 @@ describe('validatePath', () => {
       const linkPath = path.join(scratch, 'link.txt');
       const ok = withSymlinkGuard(t, () => fs.symlinkSync(targetPath, linkPath, 'file'));
       if (ok) {
-        const result = validatePath('link.txt', scratch);
-        assert.ok(result.safe, `expected safe:true, got error: ${result.error}`);
-        assert.equal(result.resolved, fs.realpathSync(targetPath));
+        const r = assertWithinRoot('link.txt', scratch, 'in-project symlink');
+        assert.equal(r, fs.realpathSync(targetPath));
       }
     } finally {
       cleanup(scratch);
@@ -167,8 +164,7 @@ describe('validatePath', () => {
       const linkPath = path.join(scratch, 'evil-link.txt');
       const ok = withSymlinkGuard(t, () => fs.symlinkSync(outsideTarget, linkPath, 'file'));
       if (ok) {
-        const result = validatePath('evil-link.txt', scratch);
-        assert.ok(!result.safe);
+        assert.equal(tryWithinRoot('evil-link.txt', scratch), null);
       }
     } finally {
       cleanup(scratch);
@@ -183,11 +179,9 @@ describe('validatePath', () => {
       const linkPath = path.join(scratch, 'dangling-link.txt');
       const ok = withSymlinkGuard(t, () => fs.symlinkSync(nonExistentOutsideTarget, linkPath, 'file'));
       if (ok) {
-        const result = validatePath('dangling-link.txt', scratch);
-        assert.ok(!result.safe, 'a dangling symlink must not be accepted as an in-project path');
-        assert.ok(
-          result.error && result.error.includes('unresolvable symbolic link'),
-          `expected the unresolvable-symlink error, got: ${result.error}`,
+        assert.throws(
+          () => assertWithinRoot('dangling-link.txt', scratch, 'test'),
+          /unresolvable symbolic link/,
         );
       }
     } finally {
@@ -202,9 +196,8 @@ describe('validatePath', () => {
       nc = makeNonCanonicalBase(scratch, t);
       if (nc) {
         fs.mkdirSync(path.join(nc.canonical, 'existingSub'));
-        const result = validatePath('existingSub/newfile.txt', nc.base);
-        assert.ok(result.safe, `expected safe:true, got error: ${result.error}`);
-        assert.equal(result.resolved, path.join(nc.canonical, 'existingSub', 'newfile.txt'));
+        const r = assertWithinRoot('existingSub/newfile.txt', nc.base, 'existing-subdir');
+        assert.equal(r, path.join(nc.canonical, 'existingSub', 'newfile.txt'));
       }
     } finally {
       cleanup(scratch);
@@ -220,9 +213,8 @@ describe('validatePath', () => {
       if (nc) {
         // Neither 'sub1' nor 'sub1/sub2' exist — the immediate-parent-only
         // fallback fails here, which is exactly the BLOCKER-2 scenario.
-        const result = validatePath('sub1/sub2/newfile.txt', nc.base);
-        assert.ok(result.safe, `expected safe:true, got error: ${result.error}`);
-        assert.equal(result.resolved, path.join(nc.canonical, 'sub1', 'sub2', 'newfile.txt'));
+        const r = assertWithinRoot('sub1/sub2/newfile.txt', nc.base, 'BLOCKER-2');
+        assert.equal(r, path.join(nc.canonical, 'sub1', 'sub2', 'newfile.txt'));
       }
     } finally {
       cleanup(scratch);
@@ -239,8 +231,11 @@ describe('validatePath', () => {
         // sub1/sub2 don't exist, and the .. segments escape not just the
         // not-yet-created subdirs but the base itself — the ancestor walk-up
         // must not turn this into an accepted path.
-        const result = validatePath('sub1/sub2/../../../escape.txt', nc.base);
-        assert.ok(!result.safe, 'escaping via .. through not-yet-created dirs must still be rejected');
+        assert.equal(
+          tryWithinRoot('sub1/sub2/../../../escape.txt', nc.base),
+          null,
+          'escaping via .. through not-yet-created dirs must still be rejected',
+        );
       }
     } finally {
       cleanup(scratch);
@@ -1220,7 +1215,7 @@ describe('SECURE: ASVS level scaling (#1627)', () => {
 // accepted. Both directions are required — a predicate rejecting everything
 // would vacuously satisfy PR1 alone.
 
-describe('validatePath — containment properties (#4652)', () => {
+describe('containment properties (#4652)', () => {
   // A path SEGMENT: letters/digits/dash/underscore, non-empty, never '.' or '..'
   // by construction so every generated escaping path is escaping ONLY via the
   // deliberately-injected `..` components below (never an accidental one).
@@ -1243,10 +1238,10 @@ describe('validatePath — containment properties (#4652)', () => {
         const upCount = baseSegments.length + extraUp;
         const traversal = path.join(...Array(upCount).fill('..'), ...tailSegments, 'target');
 
-        const result = validatePath(traversal, root);
+        const result = tryWithinRoot(traversal, root);
         assert.strictEqual(
-          result.safe,
-          false,
+          result,
+          null,
           `traversal ${JSON.stringify(traversal)} against root ${root} must be rejected, got: ${JSON.stringify(result)}`,
         );
       },
@@ -1260,13 +1255,13 @@ describe('validatePath — containment properties (#4652)', () => {
         const root = path.resolve('/gsd-root-anchor-in');
         const relPath = path.join(...segments);
 
-        const result = validatePath(relPath, root);
+        const result = tryWithinRoot(relPath, root);
         assert.strictEqual(
-          result.safe,
+          result !== null,
           true,
           `in-root path ${JSON.stringify(relPath)} against root ${root} must be accepted, got: ${JSON.stringify(result)}`,
         );
-        assert.strictEqual(result.resolved, path.resolve(root, relPath));
+        assert.strictEqual(result, path.resolve(root, relPath));
       },
     ), { seed: 4652, numRuns: 200 });
   });
