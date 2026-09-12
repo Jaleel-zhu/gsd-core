@@ -13,11 +13,15 @@
  * (a 100ms timeout killing `sleep 1`), so there is no orphan/leak risk.
  */
 
-const { describe, test } = require('node:test');
+const { describe, test, beforeEach, afterEach } = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('fs');
+const path = require('path');
+const os = require('os');
 
 const { evaluatePredicate } = require('../gsd-core/bin/lib/gate-predicate-evaluator.cjs');
 const { buildPredicateDeps, parsePredicateFlags } = require('../gsd-core/bin/lib/check-command-router.cjs');
+const { runGsdTools, createTempProject, cleanup } = require('./helpers.cjs');
 
 // ─── buildPredicateDeps: real subprocess exit mapping ─────────────────────────
 
@@ -151,5 +155,124 @@ describe('partitionPredicateArgs (#4130 follow-up)', () => {
     const { flags, positionals } = partitionPredicateArgs(['p1', '--context', 'a', 'p2', '--context', 'b', 'p3']);
     assert.equal(flags.context, 'b');
     assert.deepEqual(positionals, ['p1', 'p2', 'p3']);
+  });
+});
+
+// ─── #4354: `check predicate --phase-dir` containment boundary ───────────────
+//
+// cmdCheckPredicate passes the `--phase-dir` flag VERBATIM into PredicateContext
+// (src/check-command-router.cts) with no containment validation. Both predicate
+// kinds read/interpolate that value: `artifact-frontmatter-equals` resolves it
+// as `targetDir` for `findPhaseArtifact`, and `command-exit-zero` interpolates
+// it into `${PHASE_DIR}` in the shelled-out command. These tests reproduce the
+// issue's exact repro and prove the boundary is currently unconfined.
+
+describe('check predicate --phase-dir — containment boundary (#4354)', () => {
+  let projDir;
+  let outsideDir;
+
+  beforeEach(() => {
+    projDir = createTempProject();
+    fs.mkdirSync(path.join(projDir, '.planning', 'phases', '05-x'), { recursive: true });
+    outsideDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gsd-predicate-outside-'));
+  });
+
+  afterEach(() => {
+    cleanup(projDir);
+    cleanup(outsideDir);
+  });
+
+  test('[RED #4354] the issue\'s exact repro: artifact-frontmatter-equals against a foreign SECURITY.md via an outside --phase-dir must be rejected, not evaluated', () => {
+    fs.writeFileSync(
+      path.join(outsideDir, 'SECURITY.md'),
+      '---\nstatus: passed\n---\n# Security\n',
+    );
+
+    const predicate = JSON.stringify({
+      kind: 'artifact-frontmatter-equals',
+      artifact: 'SECURITY.md',
+      field: 'status',
+      equals: 'passed',
+    });
+
+    const result = runGsdTools(
+      ['--json-errors', 'check', 'predicate', '--predicate', predicate, '--phase-dir', outsideDir, '--raw'],
+      projDir,
+    );
+
+    // CURRENT BUG (documented, not asserted as desired): this command today
+    // succeeds and prints {"block":false,...} — a BLOCKING gate passing on
+    // foreign evidence read from OUTSIDE the project. REQUIRED behavior:
+    // the outside --phase-dir must be rejected before evaluation.
+    assert.strictEqual(
+      result.success,
+      false,
+      `an outside --phase-dir must be rejected before evaluating the predicate ` +
+        `(currently: ${result.success ? `SUCCEEDED with output ${result.output}` : 'failed for an unrelated reason'})`,
+    );
+  });
+
+  test('[RED #4354] a command-exit-zero predicate interpolating ${PHASE_DIR} with an outside --phase-dir must also be rejected', () => {
+    fs.writeFileSync(path.join(outsideDir, 'marker.txt'), 'outside-marker\n');
+
+    const predicate = JSON.stringify({
+      kind: 'command-exit-zero',
+      command: 'test -f "${PHASE_DIR}/marker.txt"',
+    });
+
+    const result = runGsdTools(
+      ['--json-errors', 'check', 'predicate', '--predicate', predicate, '--phase-dir', outsideDir, '--raw'],
+      projDir,
+    );
+
+    assert.strictEqual(
+      result.success,
+      false,
+      `a command-exit-zero predicate interpolating an outside --phase-dir must be rejected ` +
+        `(currently: ${result.success ? `SUCCEEDED with output ${result.output}` : 'failed for an unrelated reason'})`,
+    );
+  });
+
+  test('[regression] a valid in-project --phase-dir still evaluates', () => {
+    const phaseDir = path.join(projDir, '.planning', 'phases', '05-x');
+    fs.writeFileSync(
+      path.join(phaseDir, 'SECURITY.md'),
+      '---\nstatus: passed\n---\n# Security\n',
+    );
+    const predicate = JSON.stringify({
+      kind: 'artifact-frontmatter-equals',
+      artifact: 'SECURITY.md',
+      field: 'status',
+      equals: 'passed',
+    });
+
+    const result = runGsdTools(
+      ['check', 'predicate', '--predicate', predicate, '--phase-dir', phaseDir, '--raw'],
+      projDir,
+    );
+    assert.ok(result.success, `Command failed: ${result.error}`);
+    const parsed = JSON.parse(result.output);
+    assert.strictEqual(parsed.block, false, 'in-project phase-dir evaluation must still pass');
+  });
+
+  test('[regression] no --phase-dir at all still falls back to cwd and evaluates', () => {
+    fs.writeFileSync(
+      path.join(projDir, 'SECURITY.md'),
+      '---\nstatus: passed\n---\n# Security\n',
+    );
+    const predicate = JSON.stringify({
+      kind: 'artifact-frontmatter-equals',
+      artifact: 'SECURITY.md',
+      field: 'status',
+      equals: 'passed',
+    });
+
+    const result = runGsdTools(
+      ['check', 'predicate', '--predicate', predicate, '--raw'],
+      projDir,
+    );
+    assert.ok(result.success, `Command failed: ${result.error}`);
+    const parsed = JSON.parse(result.output);
+    assert.strictEqual(parsed.block, false, 'cwd-fallback evaluation must still pass');
   });
 });
