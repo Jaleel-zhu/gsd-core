@@ -4017,9 +4017,9 @@ function buildAgentSkillsBlock(
       }
       const globalSkillMdContained = tryWithinRoot(globalSkillMd, globalSkillsBase, PathAcceptance.AbsoluteInsideRoot);
       if (globalSkillMdContained === null) {
-        const acceptedViaTrustedRoot = trustedGlobalRoots.some((root) => {
-          return tryWithinRoot(globalSkillMd, root, PathAcceptance.AbsoluteInsideRoot) !== null;
-        });
+        const acceptedViaTrustedRoot = trustedGlobalRoots.some(
+          (root) => tryWithinRoot(globalSkillMd, root, PathAcceptance.AbsoluteInsideRoot) !== null,
+        );
         if (!acceptedViaTrustedRoot) {
           warn(
             `[agent-skills] WARNING: Global skill "${skillName}" failed path check (symlink escape?) — skipping\n`,
@@ -4030,6 +4030,13 @@ function buildAgentSkillsBlock(
         // trace, not a skip, so it must not land in the diagnostics warnings[].
         process.stderr.write(`[agent-skills] NOTE: Global skill "${skillName}" accepted via trusted_global_roots (resolves outside the default skills dir)\n`);
       }
+      // `ref` is an emitted display token, not a path anything reads or writes
+      // through — the containment check above is a gate, not a path producer.
+      // Emitting the validated (realpath-resolved, platform-separator) value
+      // instead of this literal broke symlinked skill dirs and Windows output.
+      // The only filesystem read here (existsSync above) already ran on the
+      // lexical path before containment was checked, so ADR-4650's "use the
+      // validated value" rule doesn't apply to this emission.
       validEntries.push({ kind: 'include', ref: `${globalSkillDir}/SKILL.md`, display: displayPath });
       continue;
     }
@@ -4037,12 +4044,13 @@ function buildAgentSkillsBlock(
     const skillPathContained = tryWithinRoot(skillPath, projectRoot);
     if (skillPathContained === null) {
       warn(
-        `[agent-skills] WARNING: Skipping unsafe path "${skillPath}": resolves outside the project directory\n`,
+        `[agent-skills] WARNING: Skipping unsafe path "${skillPath}": not confined to the project directory\n`,
       );
       continue;
     }
 
-    const skillMdPath = path.join(projectRoot, skillPath, 'SKILL.md');
+    // ADR-4650: the validated value is the value used — never re-derive from raw input.
+    const skillMdPath = path.join(skillPathContained, 'SKILL.md');
     if (!fs.existsSync(skillMdPath)) {
       // #2941: if the bare name matches a global skill, hint at the global: prefix.
       // The bare name resolves as project-relative (which doesn't exist), but the

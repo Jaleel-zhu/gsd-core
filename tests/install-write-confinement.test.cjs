@@ -4470,6 +4470,7 @@ describe('#4636 RED: capability-skill symlink escape (isPathConfined has no real
         null,
         `installOpencodeFamilySkills threw unexpectedly: ${installOpencodeFamilySkillsErr && installOpencodeFamilySkillsErr.message}`,
       );
+      assert.ok(planted, 'the symlink was never planted — this test would pass vacuously');
       assert.strictEqual(
         fs.existsSync(path.join(outsideDir, 'SKILL.md')),
         false,

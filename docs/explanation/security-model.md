@@ -162,17 +162,31 @@ module is the central security utility. It provides:
 - Shell argument validation: arguments passed to subshell commands are
   validated before use
 
-Two containment checks elsewhere in the tree are deliberately NOT routed through
+Three containment checks elsewhere in the tree are deliberately NOT routed through
 this predicate, because each is narrower or stricter rather than a second opinion.
+The common thread is that a realpath-based predicate is the wrong tool wherever a
+symlink must be *preserved* rather than resolved.
+
 The backup-restore gate in `gsd-core/bin/gsd-tools.cjs` rejects symlinks outright:
 the canonical predicate accepts a link whose target resolves inside the root, but
 for a restore that is still wrong, because writing through the link overwrites
 whatever it points at instead of materializing a regular file at the backed-up
-path. And `isPathConfined` in `src/external-descriptor-trust.cts` is lexical by
+path. `isPathConfined` in `src/external-descriptor-trust.cts` is lexical by
 design, because two install callers must validate a destination *before* the
-`mkdirSync` that creates it, where `realpath` cannot resolve. A lexical check
-cannot see a symlink, so callers that rely on it for a write-confinement
-guarantee must pair it with their own symlink refusal.
+`mkdirSync` that creates it, where `realpath` cannot resolve. And
+`ensureInsideConfig` in `src/installer-migrations.cts` is lexical because that
+module's contract is that a symlinked managed path is snapshotted, restored and
+backed up *as a link* and never dereferenced — resolving it would dereference
+precisely the links the module exists to preserve, and then reject them for
+escaping the config directory.
+
+A lexical check cannot see a symlink, so callers that rely on one for a
+write-confinement guarantee must pair it with their own symlink refusal. Three
+install call sites did not, and now do: a link planted at a capability skill's
+destination made `mkdirSync` succeed silently and redirected the write outside
+the install root, and a link planted at a capability's own `SKILL.md` was
+followed by `statSync`, so an outside file's contents were installed as a skill
+body.
 
 **Runtime hook: `gsd-prompt-guard.js`.** This hook fires on every Write or
 Edit call that targets `.planning/` files. It scans the content being written

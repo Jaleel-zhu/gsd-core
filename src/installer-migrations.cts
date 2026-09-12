@@ -19,7 +19,6 @@ import {
 import { platformWriteSync, retryRenameSync, posixNormalize } from './shell-command-projection.cjs';
 import { realClock, type Clock } from './clock.cjs';
 import { isInstallScopeId, type InstallScope } from './install-scope.cjs';
-import { tryWithinRoot, PathAcceptance } from './security.cjs';
 // #2874 (ADR-58 cleanup phase): this file is the ~1200-line migration
 // plan/apply/rollback/lock/journal engine — almost none of it is on the
 // installRuntimeArtifacts call tree. Only `readInstallManifest` and
@@ -665,18 +664,26 @@ interface EnsureInsideConfigResult {
   fullPath: string;
 }
 
+// DELIBERATELY LEXICAL — do not route this through the canonical containment
+// predicate (`assertWithinRoot` / `tryWithinRoot`, src/security.cts).
+//
+// Reviewed under epic #4636 Phase 3 and reverted after the remote matrix proved
+// the collapse wrong. This module's contract is that a symlinked managed path is
+// treated AS A LINK and never dereferenced — it is snapshotted as a link,
+// restored as a link, and backed up as a link. The canonical predicate
+// realpath-resolves, so it dereferences exactly the symlinks this module exists
+// to preserve and then rejects them for escaping configDir
+// ("migration path escapes configDir: extensions/gsd.cjs"). Four tests in
+// tests/installer-migrations.test.cjs pin that behavior.
+//
+// `normalizeRelPath` is the pre-gate: it throws on absolute paths and on any
+// '..' segment BEFORE this runs, so the check below is defense-in-depth over
+// already-traversal-free input rather than the primary boundary.
 function ensureInsideConfig(configDir: string, relPath: string): EnsureInsideConfigResult {
   const normalized = normalizeRelPath(relPath);
-  // fullPath stays the LEXICAL path.resolve result (not the canonical
-  // predicate's realpath-resolved value): both callers (readJson's
-  // ensureInsideConfig call and the migration-apply loop) use fullPath for
-  // fs.existsSync checks and journal entries, and those must not shift if
-  // configDir happens to be a symlink. Per ADR-4650 decision 6, the
-  // containment DECISION (whether fullPath is inside configDir) is owned by
-  // the canonical predicate — this wrapper only decides how to degrade
-  // (throw with this file's existing message), never whether contained.
   const fullPath = path.resolve(configDir, normalized);
-  if (tryWithinRoot(fullPath, configDir, PathAcceptance.AbsoluteInsideRoot) === null) {
+  const root = path.resolve(configDir);
+  if (fullPath !== root && !fullPath.startsWith(root + path.sep)) {
     throw new Error(`migration path escapes configDir: ${relPath}`);
   }
   return { normalized, fullPath };

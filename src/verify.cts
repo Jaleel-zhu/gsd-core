@@ -1549,7 +1549,7 @@ function cmdVerifyKeyLinks(cwd: string, planFilePath: string, raw: boolean): voi
       // project. Leave sourceContent as null so the existing not-found /
       // pending classification below runs unchanged. Note this guard is
       // narrower than it may look: `from: "."` is a non-empty string, so it
-      // still reaches validatePath and safeReadFile below, and DOES read the
+      // still reaches tryWithinRoot and safeReadFile below, and DOES read the
       // cwd directory (yielding "Source read failed: EISDIR") — this branch
       // only short-circuits the true empty-string case.
       const fromContained = tryWithinRoot(fromPath, cwd);
