@@ -871,6 +871,25 @@ describe('todo complete — containment boundary (#4327)', () => {
     });
   }
 
+  // '.' and '..' resolve to the pending dir itself (which IS inside the
+  // root, so containment passes) but are not a todo name — before #4652
+  // this fell through to an uncaught EISDIR with an absolute-path stack
+  // trace instead of a clean rejection.
+  for (const name of ['.', '..']) {
+    test(`[regression #4652] "todo complete ${name}" is rejected cleanly (no uncaught EISDIR / stack trace)`, () => {
+      const result = runGsdTools(['todo', 'complete', name], tmpDir);
+      assert.strictEqual(result.success, false, `"${name}" must be rejected`);
+      assert.ok(
+        !/at\s+\S+\s+\(.*\.c?ts?:\d+/.test(result.error || ''),
+        `rejection must not leak a stack trace (got: ${result.error})`,
+      );
+      assert.ok(
+        !(result.error || '').includes('EISDIR'),
+        `rejection must be a clean USAGE error, not an uncaught EISDIR (got: ${result.error})`,
+      );
+    });
+  }
+
   test('[RED #4327] an absolute path outside the project is rejected', () => {
     const outsideDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gsd-todo-outside-'));
     try {

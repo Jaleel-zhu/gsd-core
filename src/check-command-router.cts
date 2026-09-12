@@ -90,7 +90,12 @@ function readIfExists(filePath: string): string {
 }
 
 function resolvePath(inputPath: string, projectDir: string): string {
-  return path.isAbsolute(inputPath) ? inputPath : path.join(projectDir, inputPath);
+  const candidate = path.isAbsolute(inputPath) ? inputPath : path.join(projectDir, inputPath);
+  const check = validatePath(candidate, projectDir, { allowAbsolute: true });
+  if (!check.safe) {
+    error(`path escapes its allowed directory: ${inputPath}`, ERROR_REASON.USAGE);
+  }
+  return check.resolved;
 }
 
 interface WorkflowConfig {
@@ -1194,8 +1199,17 @@ function cmdGapAnalysisPlanPost(projectDir: string, args: string[], raw: boolean
     error('gap-analysis.plan-post requires a phase-dir argument: check gap-analysis.plan-post <phase-dir> [phase-req-ids]', ERROR_REASON.SDK_MISSING_ARG);
     return;
   }
+  const phaseDirCheck = validatePath(
+    path.isAbsolute(phaseDir) ? phaseDir : path.join(projectDir, phaseDir),
+    projectDir,
+    { allowAbsolute: true },
+  );
+  if (!phaseDirCheck.safe) {
+    error(`phase-dir escapes its allowed directory: ${phaseDir}`, ERROR_REASON.USAGE);
+    return;
+  }
   const phaseReqIds = args[3] ?? undefined;
-  const result = runGapAnalysis(projectDir, phaseDir, { phaseReqIds });
+  const result = runGapAnalysis(projectDir, phaseDirCheck.resolved, { phaseReqIds });
   // Uniform gate contract: block = false (gap-analysis is always advisory, never blocks).
   // `message` carries the human-readable gap analysis report so the dispatch's
   // advisory branch can surface it. --raw emits JSON (rawValue=undefined), not
@@ -1362,10 +1376,24 @@ function cmdCheckPredicate(projectDir: string, args: string[], raw: boolean): vo
     error('predicate --predicate value must be valid JSON', ERROR_REASON.USAGE);
     return;
   }
+  const rawPhaseDir = flags['phase-dir'];
+  let resolvedPhaseDir: string | undefined = rawPhaseDir;
+  if (typeof rawPhaseDir === 'string' && rawPhaseDir !== '') {
+    const phaseDirCheck = validatePath(
+      path.isAbsolute(rawPhaseDir) ? rawPhaseDir : path.join(projectDir, rawPhaseDir),
+      projectDir,
+      { allowAbsolute: true },
+    );
+    if (!phaseDirCheck.safe) {
+      error(`phase-dir escapes its allowed directory: ${rawPhaseDir}`, ERROR_REASON.USAGE);
+      return;
+    }
+    resolvedPhaseDir = phaseDirCheck.resolved;
+  }
   const ctx = {
     cwd: projectDir,
     phaseNumber: flags['phase-number'],
-    phaseDir: flags['phase-dir'],
+    phaseDir: resolvedPhaseDir,
     phaseReqIds: flags['phase-req-ids'],
   };
   let result;

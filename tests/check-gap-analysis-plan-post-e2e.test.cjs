@@ -777,7 +777,7 @@ describe('resolvePath / check decision-coverage-plan — containment boundary (#
       contextPath,
       '# Phase Context\n\n<decisions>\n## Implementation Decisions\n\n- **D-01:** Use pattern X\n</decisions>\n',
     );
-    fs.writeFileSync(path.join(phaseDir, '01-PLAN.md'), '# Plan\n\nImplements D-01.\n');
+    fs.writeFileSync(path.join(phaseDir, '01-PLAN.md'), '# Plan\n\n## tasks\n\n- D-01: Use pattern X\n');
     const relPhaseDir = path.relative(tmpDir, phaseDir);
 
     const result = runDecisionCoveragePlan([], relPhaseDir, contextPath, tmpDir);
@@ -792,7 +792,7 @@ describe('resolvePath / check decision-coverage-plan — containment boundary (#
       contextPath,
       '# Phase Context\n\n<decisions>\n## Implementation Decisions\n\n- **D-01:** Use pattern X\n</decisions>\n',
     );
-    fs.writeFileSync(path.join(phaseDir, '01-PLAN.md'), '# Plan\n\nImplements D-01.\n');
+    fs.writeFileSync(path.join(phaseDir, '01-PLAN.md'), '# Plan\n\n## tasks\n\n- D-01: Use pattern X\n');
 
     const result = runDecisionCoveragePlan([], phaseDir, contextPath, tmpDir);
     assert.ok(result.success, `Command failed: ${result.error}`);

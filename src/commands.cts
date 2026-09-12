@@ -11,7 +11,7 @@ import path from 'node:path';
 import { normalizeEol } from './text-lines.cjs';
 import { execGit, platformWriteSync, platformReadSync, platformEnsureDir, isSpawnTimeout, retryRenameSync } from './shell-command-projection.cjs';
 import { escapeRegex } from './pattern.cjs';
-import { requireSafePath, sanitizeForDisplay } from './security.cjs';
+import { requireSafePath, sanitizeForDisplay, validatePath } from './security.cjs';
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 import ioMod = require('./io.cjs');
 const { output, error, ERROR_REASON } = ioMod;
@@ -3491,9 +3491,27 @@ function cmdTodoComplete(cwd: string, filename: string | undefined, options: Tod
   const pendingDir = path.join(todosRoot, 'pending');
   const completedDir = path.join(todosRoot, 'completed');
   const sourcePath = path.join(pendingDir, filename as string);
+  const targetPath = path.join(completedDir, filename as string);
+
+  const sourceCheck = validatePath(sourcePath, todosRoot, { allowAbsolute: true });
+  if (!sourceCheck.safe) {
+    error(`todo file escapes its allowed directory: ${filename as string}`, ERROR_REASON.USAGE);
+  }
+  const targetCheck = validatePath(targetPath, todosRoot, { allowAbsolute: true });
+  if (!targetCheck.safe) {
+    error(`todo file escapes its allowed directory: ${filename as string}`, ERROR_REASON.USAGE);
+  }
 
   if (!fs.existsSync(sourcePath)) {
     error(`Todo not found: ${filename as string}`);
+  }
+
+  // #4652: `.` and `..` resolve to the pending dir itself (which IS inside
+  // todosRoot, so containment passes) but are not a todo file — reject them
+  // the same way as any other invalid name instead of letting
+  // fs.readFileSync throw an uncaught EISDIR with an absolute-path stack trace.
+  if (!fs.statSync(sourcePath).isFile()) {
+    error(`todo name is not a file: ${filename as string}`, ERROR_REASON.USAGE);
   }
 
   const content = fs.readFileSync(sourcePath, 'utf-8');

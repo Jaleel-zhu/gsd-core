@@ -255,6 +255,44 @@ describe('check predicate --phase-dir — containment boundary (#4354)', () => {
     assert.strictEqual(parsed.block, false, 'in-project phase-dir evaluation must still pass');
   });
 
+  test('[regression #4652] a relative --phase-dir must resolve against --cwd, not the real process cwd, and must not leak the outside file', () => {
+    // The real process cwd (outsideDir) contains a foreign SECURITY.md; the
+    // CLI is told --cwd projDir with a relative --phase-dir '.'. Before #4652,
+    // cmdCheckPredicate validated the joined (projDir + '.') path but passed
+    // the RAW, un-joined '.' into ctx.phaseDir, which findPhaseArtifact then
+    // resolved against the real process cwd (outsideDir) — leaking foreign
+    // frontmatter. The fix must reject this, and the leaked value must never
+    // appear in the output.
+    fs.writeFileSync(
+      path.join(outsideDir, 'SECURITY.md'),
+      '---\nstatus: LEAKED_VALUE\n---\n# Security\n',
+    );
+
+    const predicate = JSON.stringify({
+      kind: 'artifact-frontmatter-equals',
+      artifact: 'SECURITY.md',
+      field: 'status',
+      equals: 'NOPE',
+    });
+
+    const result = runGsdTools(
+      ['--json-errors', 'check', 'predicate', '--cwd', projDir, '--predicate', predicate, '--phase-dir', '.', '--raw'],
+      outsideDir,
+    );
+
+    const combinedOutput = `${result.output || ''}${result.error || ''}`;
+    assert.ok(
+      !combinedOutput.includes('LEAKED_VALUE'),
+      `the outside file's frontmatter value must never leak into the output (got: ${combinedOutput})`,
+    );
+    assert.strictEqual(
+      result.success && JSON.parse(result.output).block === false,
+      false,
+      `a relative --phase-dir must not resolve against the real process cwd and must not pass ` +
+        `(currently: ${combinedOutput})`,
+    );
+  });
+
   test('[regression] no --phase-dir at all still falls back to cwd and evaluates', () => {
     fs.writeFileSync(
       path.join(projDir, 'SECURITY.md'),
