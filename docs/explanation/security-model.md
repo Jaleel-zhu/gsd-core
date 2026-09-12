@@ -138,9 +138,22 @@ GSD Core addresses prompt injection at three levels.
 **Input validation (`security.cjs`).** The `gsd-core/bin/lib/security.cjs`
 module is the central security utility. It provides:
 
-- Path traversal prevention: user-supplied file paths (`--text-file`, `--prd`)
-  are validated to resolve within the project directory, with macOS
-  `/var` → `/private/var` symlink resolution handled explicitly
+- Path containment: user-supplied file paths and directories are validated to
+  resolve within a declared root before any filesystem access. One predicate
+  answers this for the whole tree (epic #4636, ADR-4650). The resolution engine
+  is module-internal and resolves symlinks, closes a dangling-symlink existence
+  oracle, and canonicalizes ancestors so a not-yet-created path under a
+  non-canonical base (macOS `/var` → `/private/var`) still resolves. The
+  exported surface is `assertWithinRoot` (throws), `tryWithinRoot` (returns
+  `null`), and `requireSafePath` (a preserved alias of the throwing form).
+  All three return a branded `ContainedPath`: a plain `string` is not assignable
+  to it, so validating one path and then handing a different one to the
+  filesystem is a type error rather than a silent bug. Whether an absolute
+  candidate is considered at all is a named policy — `PathAcceptance.RelativeOnly`
+  or `PathAcceptance.AbsoluteInsideRoot` — and neither relaxes containment: an
+  absolute path resolving outside the root is rejected exactly as a traversal is.
+  A caller may decide how to degrade on rejection, never whether a path is
+  contained.
 - Prompt injection detection: known injection patterns (role overrides,
   instruction bypasses, system tag injections) are scanned in user-supplied
   text before it enters any planning artifact
@@ -148,6 +161,18 @@ module is the central security utility. It provides:
   crafted JSON payloads
 - Shell argument validation: arguments passed to subshell commands are
   validated before use
+
+Two containment checks elsewhere in the tree are deliberately NOT routed through
+this predicate, because each is narrower or stricter rather than a second opinion.
+The backup-restore gate in `gsd-core/bin/gsd-tools.cjs` rejects symlinks outright:
+the canonical predicate accepts a link whose target resolves inside the root, but
+for a restore that is still wrong, because writing through the link overwrites
+whatever it points at instead of materializing a regular file at the backed-up
+path. And `isPathConfined` in `src/external-descriptor-trust.cts` is lexical by
+design, because two install callers must validate a destination *before* the
+`mkdirSync` that creates it, where `realpath` cannot resolve. A lexical check
+cannot see a symlink, so callers that rely on it for a write-confinement
+guarantee must pair it with their own symlink refusal.
 
 **Runtime hook: `gsd-prompt-guard.js`.** This hook fires on every Write or
 Edit call that targets `.planning/` files. It scans the content being written
