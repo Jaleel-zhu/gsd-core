@@ -890,25 +890,24 @@ describe('todo complete — containment boundary (#4327)', () => {
     });
   }
 
-  test('[#4327] an absolute filename is folded under the pending dir, not rejected as containment violation — the outside file is untouched', () => {
-    // MEASURED: path.join(pendingDir, '/abs/outside/evil.md') === `${pendingDir}/abs/outside/evil.md`
-    // — Node's path.join does not let a later absolute segment escape a prior
-    // one. So an absolute `filename` is folded INSIDE todosRoot, passes
-    // containment, and simply 404s as "Todo not found" (unless a file of
-    // that joined name happens to exist under pendingDir). It is NOT
-    // rejected as a containment/escape violation.
+  test('[#4327] an absolute filename is rejected as a non-basename before any join — the outside file is untouched', () => {
+    // A basename guard added since #4327 rejects any filename containing `/`
+    // or `\` BEFORE it is ever joined against pendingDir — so an absolute
+    // path never reaches path.join, containment, or the filesystem at all.
+    // It is a USAGE rejection, not a containment/escape check and not a
+    // plain "not found". This test also pins the thing that actually
+    // matters: the real outside file is never read, moved, or deleted.
     const outsideDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gsd-todo-outside-'));
     try {
       const outsideFile = path.join(outsideDir, 'evil.md');
       const sentinel = '---\nstatus: pending\n---\nSENTINEL\n';
       fs.writeFileSync(outsideFile, sentinel);
-      const result = runGsdTools(['todo', 'complete', outsideFile], tmpDir);
+      const result = runGsdTools(['--json-errors', 'todo', 'complete', outsideFile], tmpDir);
 
-      assert.strictEqual(result.success, false, 'the command must fail (the folded path does not exist under pending/)');
-      assert.ok(
-        (result.error || '').includes('not found'),
-        `must fail as a plain "not found", not a containment rejection (got: ${result.error})`,
-      );
+      assert.strictEqual(result.success, false, 'the command must fail (a filename containing a separator is rejected)');
+      const parsed = JSON.parse(result.error);
+      assert.strictEqual(parsed.ok, false);
+      assert.strictEqual(parsed.reason, 'usage');
       assert.ok(fs.existsSync(outsideFile), 'the real outside file must still exist');
       assert.strictEqual(
         fs.readFileSync(outsideFile, 'utf-8'),
