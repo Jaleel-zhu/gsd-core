@@ -890,13 +890,38 @@ describe('todo complete — containment boundary (#4327)', () => {
     });
   }
 
-  test('[RED #4327] an absolute path outside the project is rejected', () => {
+  test('[#4327] an absolute filename is folded under the pending dir, not rejected as containment violation — the outside file is untouched', () => {
+    // MEASURED: path.join(pendingDir, '/abs/outside/evil.md') === `${pendingDir}/abs/outside/evil.md`
+    // — Node's path.join does not let a later absolute segment escape a prior
+    // one. So an absolute `filename` is folded INSIDE todosRoot, passes
+    // containment, and simply 404s as "Todo not found" (unless a file of
+    // that joined name happens to exist under pendingDir). It is NOT
+    // rejected as a containment/escape violation.
     const outsideDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gsd-todo-outside-'));
     try {
       const outsideFile = path.join(outsideDir, 'evil.md');
-      fs.writeFileSync(outsideFile, '---\nstatus: pending\n---\nSENTINEL\n');
+      const sentinel = '---\nstatus: pending\n---\nSENTINEL\n';
+      fs.writeFileSync(outsideFile, sentinel);
       const result = runGsdTools(['todo', 'complete', outsideFile], tmpDir);
-      assert.strictEqual(result.success, false, 'an absolute path outside the project must be rejected');
+
+      assert.strictEqual(result.success, false, 'the command must fail (the folded path does not exist under pending/)');
+      assert.ok(
+        (result.error || '').includes('not found'),
+        `must fail as a plain "not found", not a containment rejection (got: ${result.error})`,
+      );
+      assert.ok(fs.existsSync(outsideFile), 'the real outside file must still exist');
+      assert.strictEqual(
+        fs.readFileSync(outsideFile, 'utf-8'),
+        sentinel,
+        'the real outside file must never be read/touched',
+      );
+      const completedDir = path.join(tmpDir, '.planning', 'todos', 'completed');
+      if (fs.existsSync(completedDir)) {
+        assert.ok(
+          !fs.readdirSync(completedDir).includes('evil.md'),
+          'the outside file must never land inside completed/',
+        );
+      }
     } finally {
       cleanup(outsideDir);
     }
@@ -959,6 +984,38 @@ describe('todo complete — containment boundary (#4327)', () => {
       );
     } finally {
       cleanup(outsideDir);
+    }
+  });
+
+  test('[#4652] a symlink inside pending/ whose target is a real file outside the todos root is rejected — the outside target is untouched', (t) => {
+    const outsideDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gsd-todo-outside-'));
+    const linkPath = path.join(pendingDir, 'linked.md');
+    try {
+      const outsideFile = path.join(outsideDir, 'real-target.md');
+      const sentinel = '---\nstatus: pending\n---\nSENTINEL-SYMLINK\n';
+      fs.writeFileSync(outsideFile, sentinel);
+      try {
+        fs.symlinkSync(outsideFile, linkPath, 'file');
+      } catch (e) {
+        if (e.code === 'EPERM') {
+          t.skip('symlink creation is not permitted on this platform (EPERM)');
+          return;
+        }
+        throw e;
+      }
+
+      const result = runGsdTools(['todo', 'complete', 'linked.md'], tmpDir);
+
+      assert.strictEqual(result.success, false, 'a symlink pointing outside the todos root must be rejected');
+      assert.ok(fs.existsSync(outsideFile), 'the outside symlink target must still exist');
+      assert.strictEqual(
+        fs.readFileSync(outsideFile, 'utf-8'),
+        sentinel,
+        'the outside symlink target content must be byte-for-byte untouched',
+      );
+    } finally {
+      cleanup(outsideDir);
+      try { fs.unlinkSync(linkPath); } catch { /* not created, or already gone */ }
     }
   });
 });

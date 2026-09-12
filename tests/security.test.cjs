@@ -1248,7 +1248,7 @@ describe('validatePath — containment properties (#4652)', () => {
           `traversal ${JSON.stringify(traversal)} against root ${root} must be rejected, got: ${JSON.stringify(result)}`,
         );
       },
-    ));
+    ), { seed: 4652, numRuns: 200 });
   });
 
   test('PR2: a path that resolves INSIDE the root (no traversal beyond it) is ALWAYS accepted', () => {
@@ -1266,7 +1266,7 @@ describe('validatePath — containment properties (#4652)', () => {
         );
         assert.strictEqual(result.resolved, path.resolve(root, relPath));
       },
-    ));
+    ), { seed: 4652, numRuns: 200 });
   });
 });
 

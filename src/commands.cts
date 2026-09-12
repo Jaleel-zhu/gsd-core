@@ -3502,7 +3502,10 @@ function cmdTodoComplete(cwd: string, filename: string | undefined, options: Tod
     error(`todo file escapes its allowed directory: ${filename as string}`, ERROR_REASON.USAGE);
   }
 
-  if (!fs.existsSync(sourcePath)) {
+  const resolvedSource = sourceCheck.resolved;
+  const resolvedTarget = targetCheck.resolved;
+
+  if (!fs.existsSync(resolvedSource)) {
     error(`Todo not found: ${filename as string}`);
   }
 
@@ -3510,11 +3513,11 @@ function cmdTodoComplete(cwd: string, filename: string | undefined, options: Tod
   // todosRoot, so containment passes) but are not a todo file — reject them
   // the same way as any other invalid name instead of letting
   // fs.readFileSync throw an uncaught EISDIR with an absolute-path stack trace.
-  if (!fs.statSync(sourcePath).isFile()) {
+  if (!fs.statSync(resolvedSource).isFile()) {
     error(`todo name is not a file: ${filename as string}`, ERROR_REASON.USAGE);
   }
 
-  const content = fs.readFileSync(sourcePath, 'utf-8');
+  const content = fs.readFileSync(resolvedSource, 'utf-8');
   const today = realClock.localToday();
 
   // #4096: --dry-run mirrors `milestone complete --dry-run` (#2118) — every
@@ -3527,8 +3530,8 @@ function cmdTodoComplete(cwd: string, filename: string | undefined, options: Tod
       file: filename,
       date: today,
       would_move: {
-        source: path.relative(cwd, sourcePath).split(path.sep).join('/'),
-        target: path.relative(cwd, path.join(completedDir, filename as string)).split(path.sep).join('/'),
+        source: path.relative(cwd, resolvedSource).split(path.sep).join('/'),
+        target: path.relative(cwd, resolvedTarget).split(path.sep).join('/'),
       },
       would_set: { completed: today, status: 'completed' },
     }, raw);
@@ -3541,8 +3544,8 @@ function cmdTodoComplete(cwd: string, filename: string | undefined, options: Tod
 
   const completedContent = upsertTodoCompletionFields(content, today);
 
-  platformWriteSync(path.join(completedDir, filename as string), completedContent);
-  fs.unlinkSync(sourcePath);
+  platformWriteSync(resolvedTarget, completedContent);
+  fs.unlinkSync(resolvedSource);
 
   output({ completed: true, file: filename, date: today }, raw, 'completed');
 }

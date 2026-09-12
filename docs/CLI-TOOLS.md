@@ -1178,12 +1178,17 @@ from `todos/pending/` to `todos/completed/` and upserts `completed:` and
 rejected loudly.
 
 `<filename>` is a **basename inside the todos root**, not a path. A value that
-resolves outside that root — a traversal like `../../escaped`, an embedded
-separator like `sub/name.md`, or an absolute path — is rejected as a usage
-error **before** any file is read or moved (#4327). The check covers both halves
-of the move, so neither the source nor the destination can land outside the
-root, and `--dry-run` is rejected on the same terms rather than previewing a
-resolved outside path.
+resolves outside that root — a traversal like `../../escaped` or an embedded
+separator like `sub/name.md` — is rejected as a usage error **before** any file
+is read or moved (#4327). An absolute path is handled differently: it is
+**folded under the todos root** (Node's `path.join` does not let a later
+absolute segment escape a prior one), so it cannot reach a file outside the
+root — it simply fails with the ordinary "Todo not found" error unless a file
+of that joined name happens to exist under `todos/pending/`; it is not
+rejected as a containment violation. The check covers both halves of the move,
+so neither the source nor the destination can land outside the root, and
+`--dry-run` is rejected on the same terms rather than previewing a resolved
+outside path.
 
 ```bash
 # UAT audit — scan all phases for unresolved items

@@ -1199,17 +1199,9 @@ function cmdGapAnalysisPlanPost(projectDir: string, args: string[], raw: boolean
     error('gap-analysis.plan-post requires a phase-dir argument: check gap-analysis.plan-post <phase-dir> [phase-req-ids]', ERROR_REASON.SDK_MISSING_ARG);
     return;
   }
-  const phaseDirCheck = validatePath(
-    path.isAbsolute(phaseDir) ? phaseDir : path.join(projectDir, phaseDir),
-    projectDir,
-    { allowAbsolute: true },
-  );
-  if (!phaseDirCheck.safe) {
-    error(`phase-dir escapes its allowed directory: ${phaseDir}`, ERROR_REASON.USAGE);
-    return;
-  }
+  const resolvedPhaseDir = resolvePath(phaseDir, projectDir);
   const phaseReqIds = args[3] ?? undefined;
-  const result = runGapAnalysis(projectDir, phaseDirCheck.resolved, { phaseReqIds });
+  const result = runGapAnalysis(projectDir, resolvedPhaseDir, { phaseReqIds });
   // Uniform gate contract: block = false (gap-analysis is always advisory, never blocks).
   // `message` carries the human-readable gap analysis report so the dispatch's
   // advisory branch can surface it. --raw emits JSON (rawValue=undefined), not
@@ -1379,16 +1371,7 @@ function cmdCheckPredicate(projectDir: string, args: string[], raw: boolean): vo
   const rawPhaseDir = flags['phase-dir'];
   let resolvedPhaseDir: string | undefined = rawPhaseDir;
   if (typeof rawPhaseDir === 'string' && rawPhaseDir !== '') {
-    const phaseDirCheck = validatePath(
-      path.isAbsolute(rawPhaseDir) ? rawPhaseDir : path.join(projectDir, rawPhaseDir),
-      projectDir,
-      { allowAbsolute: true },
-    );
-    if (!phaseDirCheck.safe) {
-      error(`phase-dir escapes its allowed directory: ${rawPhaseDir}`, ERROR_REASON.USAGE);
-      return;
-    }
-    resolvedPhaseDir = phaseDirCheck.resolved;
+    resolvedPhaseDir = resolvePath(rawPhaseDir, projectDir);
   }
   const ctx = {
     cwd: projectDir,

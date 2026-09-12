@@ -293,6 +293,65 @@ describe('check predicate --phase-dir — containment boundary (#4354)', () => {
     );
   });
 
+  test('[#4652] a --phase-dir that is a symlink inside the project resolving outside the project is rejected', (t) => {
+    fs.writeFileSync(
+      path.join(outsideDir, 'SECURITY.md'),
+      '---\nstatus: passed\n---\n# Security\n',
+    );
+    const linkPath = path.join(projDir, '.planning', 'phases', 'linked-out');
+    try {
+      fs.symlinkSync(outsideDir, linkPath, 'dir');
+    } catch (e) {
+      if (e.code === 'EPERM') {
+        t.skip('symlink creation is not permitted on this platform (EPERM)');
+        return;
+      }
+      throw e;
+    }
+
+    const predicate = JSON.stringify({
+      kind: 'artifact-frontmatter-equals',
+      artifact: 'SECURITY.md',
+      field: 'status',
+      equals: 'passed',
+    });
+
+    const result = runGsdTools(
+      ['--json-errors', 'check', 'predicate', '--predicate', predicate, '--phase-dir', linkPath, '--raw'],
+      projDir,
+    );
+
+    assert.strictEqual(
+      result.success,
+      false,
+      `a --phase-dir symlink resolving outside the project must be rejected ` +
+        `(currently: ${result.success ? `SUCCEEDED with output ${result.output}` : 'failed for an unrelated reason'})`,
+    );
+  });
+
+  test('[#4652] a relative --phase-dir interpolates ${PHASE_DIR} as the resolved ABSOLUTE path, not the relative value', () => {
+    const phaseDir = path.join(projDir, '.planning', 'phases', '05-x');
+    fs.writeFileSync(path.join(phaseDir, 'marker.txt'), 'marker\n');
+
+    const predicate = JSON.stringify({
+      kind: 'command-exit-zero',
+      command: 'echo "${PHASE_DIR}" > "${PHASE_DIR}/interpolated.txt"',
+    });
+
+    const result = runGsdTools(
+      ['check', 'predicate', '--predicate', predicate, '--phase-dir', '.planning/phases/05-x', '--raw'],
+      projDir,
+    );
+
+    assert.ok(result.success, `Command failed: ${result.error}`);
+    const interpolated = fs.readFileSync(path.join(phaseDir, 'interpolated.txt'), 'utf-8').trim();
+    assert.strictEqual(
+      interpolated,
+      fs.realpathSync(phaseDir),
+      `${'${PHASE_DIR}'} must interpolate the resolved absolute path, not the relative --phase-dir value`,
+    );
+  });
+
   test('[regression] no --phase-dir at all still falls back to cwd and evaluates', () => {
     fs.writeFileSync(
       path.join(projDir, 'SECURITY.md'),
