@@ -11,7 +11,7 @@ import path from 'node:path';
 import { normalizeEol } from './text-lines.cjs';
 import { execGit, platformWriteSync, platformReadSync, platformEnsureDir, isSpawnTimeout, retryRenameSync } from './shell-command-projection.cjs';
 import { escapeRegex } from './pattern.cjs';
-import { requireSafePath, sanitizeForDisplay } from './security.cjs';
+import { requireSafePath, sanitizeForDisplay, validatePath } from './security.cjs';
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 import ioMod = require('./io.cjs');
 const { output, error, ERROR_REASON } = ioMod;
@@ -3490,13 +3490,61 @@ function cmdTodoComplete(cwd: string, filename: string | undefined, options: Tod
   const todosRoot = todosDir(cwd);
   const pendingDir = path.join(todosRoot, 'pending');
   const completedDir = path.join(todosRoot, 'completed');
-  const sourcePath = path.join(pendingDir, filename as string);
 
-  if (!fs.existsSync(sourcePath)) {
+  // #4652: containment against todosRoot only rejects paths that leave the
+  // root — it cannot express "a todo name is a basename, not a path" (see
+  // #4327). `../sibling.md`, `a/../../b.md`, and `sub/name.md` all resolve
+  // to a location inside todosRoot (or inside pending/) and would pass
+  // containment, yet none of them is a bare filename. Reject on basename
+  // shape FIRST, before any path is even joined — same predicate shape as
+  // findPhaseArtifact in check-command-router.cts. Checking both `/` and
+  // `\` explicitly (not just path.basename) matters on POSIX, where a
+  // literal backslash is just an ordinary filename character to
+  // path.basename but not to path.win32.basename or to the user's intent.
+  const rawFilename = filename as string;
+  if (
+    rawFilename === '.' ||
+    rawFilename === '..' ||
+    rawFilename.includes('\0') ||
+    rawFilename.includes('/') ||
+    rawFilename.includes('\\') ||
+    path.basename(rawFilename) !== rawFilename ||
+    path.win32.basename(rawFilename) !== rawFilename
+  ) {
+    error(`todo name must be a plain filename inside the pending directory, not a path: ${rawFilename}`, ERROR_REASON.USAGE);
+  }
+
+  const sourcePath = path.join(pendingDir, filename as string);
+  const targetPath = path.join(completedDir, filename as string);
+
+  const sourceCheck = validatePath(sourcePath, todosRoot, { allowAbsolute: true });
+  if (!sourceCheck.safe) {
+    error(`todo file escapes its allowed directory: ${filename as string}`, ERROR_REASON.USAGE);
+  }
+  const targetCheck = validatePath(targetPath, todosRoot, { allowAbsolute: true });
+  if (!targetCheck.safe) {
+    error(`todo file escapes its allowed directory: ${filename as string}`, ERROR_REASON.USAGE);
+  }
+
+  const resolvedSource = sourceCheck.resolved;
+  const resolvedTarget = targetCheck.resolved;
+
+  if (!fs.existsSync(resolvedSource)) {
     error(`Todo not found: ${filename as string}`);
   }
 
-  const content = fs.readFileSync(sourcePath, 'utf-8');
+  // #4652: a name that IS a bare basename can still resolve to something that
+  // is not a regular file — a directory, symlink-to-directory, FIFO or socket
+  // sitting in pending/ under an ordinary-looking name. `.` and `..` no longer
+  // reach here (the basename guard above rejects them first), so this is not
+  // about traversal; it stops fs.readFileSync from throwing an uncaught EISDIR
+  // with an absolute-path stack trace where every sibling case gives a clean
+  // USAGE rejection.
+  if (!fs.statSync(resolvedSource).isFile()) {
+    error(`todo name is not a file: ${filename as string}`, ERROR_REASON.USAGE);
+  }
+
+  const content = fs.readFileSync(resolvedSource, 'utf-8');
   const today = realClock.localToday();
 
   // #4096: --dry-run mirrors `milestone complete --dry-run` (#2118) — every
@@ -3509,8 +3557,8 @@ function cmdTodoComplete(cwd: string, filename: string | undefined, options: Tod
       file: filename,
       date: today,
       would_move: {
-        source: path.relative(cwd, sourcePath).split(path.sep).join('/'),
-        target: path.relative(cwd, path.join(completedDir, filename as string)).split(path.sep).join('/'),
+        source: path.relative(cwd, resolvedSource).split(path.sep).join('/'),
+        target: path.relative(cwd, resolvedTarget).split(path.sep).join('/'),
       },
       would_set: { completed: today, status: 'completed' },
     }, raw);
@@ -3523,8 +3571,8 @@ function cmdTodoComplete(cwd: string, filename: string | undefined, options: Tod
 
   const completedContent = upsertTodoCompletionFields(content, today);
 
-  platformWriteSync(path.join(completedDir, filename as string), completedContent);
-  fs.unlinkSync(sourcePath);
+  platformWriteSync(resolvedTarget, completedContent);
+  fs.unlinkSync(resolvedSource);
 
   output({ completed: true, file: filename, date: today }, raw, 'completed');
 }
