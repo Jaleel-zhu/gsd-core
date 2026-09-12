@@ -24,6 +24,8 @@ const {
   validateFieldName,
   validateShellArg,
   validatePromptStructure,
+  assertWithinRoot,
+  tryWithinRoot,
 } = require('../gsd-core/bin/lib/security.cjs');
 
 // ─── Path Traversal Prevention ──────────────────────────────────────────────
@@ -1345,4 +1347,149 @@ describe('cross-boundary containment — shared escaping inputs, same rejection 
       }
     });
   }
+});
+
+// ─── #4653: assertWithinRoot / tryWithinRoot — narrowed export ──────────────
+//
+// Phase 3 narrows the public surface: `validatePath` becomes module-internal
+// and two new exports appear, both returning a branded ContainedPath.
+// `assertWithinRoot` throws on escape (requireSafePath becomes a thin alias
+// of it); `tryWithinRoot` returns null on escape. Neither export exists yet
+// — this whole block is RED by construction (missing export, not a typo:
+// verified against the compiled gsd-core/bin/lib/security.cjs export list,
+// which lists only validatePath/loadTrustedGlobalRoots/requireSafePath/
+// scanForInjection/sanitizeForPrompt/sanitizeForDisplay/sanitizeLabel/
+// validateShellArg/safeJsonParse/validatePhaseNumber/validateFieldName/
+// validatePromptStructure).
+
+describe('assertWithinRoot / tryWithinRoot — narrowed export (#4653)', () => {
+  const base = '/projects/my-app';
+
+  describe('assertWithinRoot', () => {
+    test('returns the resolved path for a contained relative input', () => {
+      const resolved = assertWithinRoot('src/index.js', base);
+      assert.equal(resolved, path.resolve(base, 'src/index.js'));
+    });
+
+    test('returns the resolved path for an absolute input INSIDE the root when {allowAbsolute:true}', () => {
+      const resolved = assertWithinRoot(path.join(base, 'src/file.js'), base, null, { allowAbsolute: true });
+      assert.equal(resolved, path.resolve(base, 'src/file.js'));
+    });
+
+    test('throws on a ../ traversal escaping the root', () => {
+      assert.throws(() => assertWithinRoot('../../etc/passwd', base));
+    });
+
+    test('throws on an absolute path outside the root even with {allowAbsolute:true}', () => {
+      assert.throws(() => assertWithinRoot('/etc/passwd', base, null, { allowAbsolute: true }));
+    });
+
+    test('throws on a null byte', () => {
+      assert.throws(() => assertWithinRoot('src/\0evil.js', base));
+    });
+
+    test('throws on empty input', () => {
+      assert.throws(() => assertWithinRoot('', base));
+    });
+
+    test('throws on non-string input', () => {
+      assert.throws(() => assertWithinRoot(42, base));
+    });
+
+    test('thrown message uses the label, matching requireSafePath\'s "<label> validation failed: <reason>" shape', () => {
+      assert.throws(
+        () => assertWithinRoot('../../etc/passwd', base, 'PRD file'),
+        /PRD file validation failed/,
+      );
+    });
+  });
+
+  describe('tryWithinRoot', () => {
+    test('returns the resolved path for a contained relative input', () => {
+      const resolved = tryWithinRoot('src/index.js', base);
+      assert.equal(resolved, path.resolve(base, 'src/index.js'));
+    });
+
+    test('returns the resolved path for an absolute input INSIDE the root when {allowAbsolute:true}', () => {
+      const resolved = tryWithinRoot(path.join(base, 'src/file.js'), base, { allowAbsolute: true });
+      assert.equal(resolved, path.resolve(base, 'src/file.js'));
+    });
+
+    test('returns exactly null (not "" and not the escaping path) for a ../ traversal escaping the root', () => {
+      const result = tryWithinRoot('../../etc/passwd', base);
+      assert.strictEqual(result, null);
+    });
+
+    test('returns exactly null for an absolute path outside the root even with {allowAbsolute:true}', () => {
+      const result = tryWithinRoot('/etc/passwd', base, { allowAbsolute: true });
+      assert.strictEqual(result, null);
+    });
+
+    test('returns exactly null for a null byte, empty input, and non-string input', () => {
+      assert.strictEqual(tryWithinRoot('src/\0evil.js', base), null);
+      assert.strictEqual(tryWithinRoot('', base), null);
+      assert.strictEqual(tryWithinRoot(42, base), null);
+    });
+
+    test('on a traversal escape, the return value does NOT contain the escaping path\'s basename', () => {
+      // Regression guard: the current validatePath shape populates `resolved`
+      // with the ESCAPING path on the traversal branch even when safe:false —
+      // a caller who ignores the boolean gets a usable attacker-controlled
+      // value. tryWithinRoot must not leak that value in any form; asserting
+      // strict null (above) already covers this, but this test additionally
+      // guards against a partial fix that returns '' or a truncated variant
+      // still containing the escaping basename.
+      const result = tryWithinRoot('../../etc/passwd', base);
+      assert.strictEqual(result, null);
+      const resultStr = String(result);
+      assert.ok(!resultStr.includes('passwd'), `leaked escaping path basename: ${resultStr}`);
+    });
+  });
+
+  // ── Parity: the two shapes must never drift ──────────────────────────────
+  //
+  // tryWithinRoot(p, root) returns non-null IFF assertWithinRoot(p, root)
+  // does not throw, and when both succeed the returned values are equal.
+  // Two exported shapes over one engine is a divergence pair by
+  // construction; this is the parity assertion for it. Seeded per this
+  // repo's fast-check convention (see the #4652 containment properties
+  // above in this same file).
+
+  test('parity: tryWithinRoot succeeds IFF assertWithinRoot does not throw, and values agree (#4653)', () => {
+    const root = path.resolve('/gsd-root-anchor-parity');
+    fc.assert(fc.property(
+      fc.string(),
+      (candidate) => {
+        let assertResult;
+        let assertThrew = false;
+        try {
+          assertResult = assertWithinRoot(candidate, root);
+        } catch {
+          assertThrew = true;
+        }
+        const tryResult = tryWithinRoot(candidate, root);
+
+        if (assertThrew) {
+          assert.strictEqual(tryResult, null, `assertWithinRoot threw for ${JSON.stringify(candidate)} but tryWithinRoot returned non-null: ${tryResult}`);
+        } else {
+          assert.notStrictEqual(tryResult, null, `assertWithinRoot succeeded for ${JSON.stringify(candidate)} but tryWithinRoot returned null`);
+          assert.strictEqual(tryResult, assertResult, `assertWithinRoot and tryWithinRoot disagree on resolved value for ${JSON.stringify(candidate)}`);
+        }
+      },
+    ), { seed: 4653, numRuns: 200 });
+  });
+
+  // ── Message-text contract ─────────────────────────────────────────────────
+  //
+  // A user-facing `reason` field elsewhere in the test suite asserts on the
+  // literal string "escapes allowed directory" (see the existing
+  // `validatePath` "rejects ../ traversal escaping base" test above). A
+  // refactor to assertWithinRoot/tryWithinRoot must not reword it.
+
+  test('escape rejection still carries the text "escapes allowed directory" (#4653)', () => {
+    assert.throws(
+      () => assertWithinRoot('../../etc/passwd', base),
+      /escapes allowed directory/,
+    );
+  });
 });
