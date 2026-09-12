@@ -44,7 +44,7 @@ import { formatGsdSlash, resolveRuntime } from './runtime-slash.cjs';
 import { resolveReportedRuntime } from './host-runtime-detection.cjs';
 // eslint-disable-next-line @typescript-eslint/no-require-imports -- commands.cjs is an export= CommonJS module
 import commandsMod = require('./commands.cjs');
-import { validatePath, loadTrustedGlobalRoots } from './security.cjs';
+import { tryWithinRoot, loadTrustedGlobalRoots } from './security.cjs';
 import { getGlobalSkillDir, getGlobalSkillDisplayPath, getGlobalSkillsBase, getGlobalConfigDir } from './runtime-homes.cjs';
 // eslint-disable-next-line @typescript-eslint/no-require-imports -- frontmatter.cjs is an export= CommonJS module
 import frontmatterMod = require('./frontmatter.cjs');
@@ -4015,11 +4015,10 @@ function buildAgentSkillsBlock(
         );
         continue;
       }
-      const pathCheck = validatePath(globalSkillMd, globalSkillsBase, { allowAbsolute: true }) as unknown as Record<string, unknown>;
-      if (!pathCheck['safe']) {
+      const globalSkillMdContained = tryWithinRoot(globalSkillMd, globalSkillsBase, { allowAbsolute: true });
+      if (globalSkillMdContained === null) {
         const acceptedViaTrustedRoot = trustedGlobalRoots.some((root) => {
-          const rootCheck = validatePath(globalSkillMd, root, { allowAbsolute: true }) as unknown as Record<string, unknown>;
-          return Boolean(rootCheck['safe']);
+          return tryWithinRoot(globalSkillMd, root, { allowAbsolute: true }) !== null;
         });
         if (!acceptedViaTrustedRoot) {
           warn(
@@ -4035,10 +4034,10 @@ function buildAgentSkillsBlock(
       continue;
     }
 
-    const pathCheck = validatePath(skillPath, projectRoot) as unknown as Record<string, unknown>;
-    if (!pathCheck['safe']) {
+    const skillPathContained = tryWithinRoot(skillPath, projectRoot);
+    if (skillPathContained === null) {
       warn(
-        `[agent-skills] WARNING: Skipping unsafe path "${skillPath}": ${pathCheck['error'] as string}\n`,
+        `[agent-skills] WARNING: Skipping unsafe path "${skillPath}": resolves outside the project directory\n`,
       );
       continue;
     }
