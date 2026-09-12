@@ -20,6 +20,7 @@
 'use strict';
 
 import path from 'node:path';
+import { tryWithinRootLexical } from './security.cjs';
 
 /**
  * Pure LEXICAL path-containment check (cross-platform). `target` is confined
@@ -53,6 +54,11 @@ import path from 'node:path';
  * in this repo, e.g. src/shell-command-projection.cts's `opts.platform`
  * (#4641). All existing 2-arg callers are unaffected: the default resolves to
  * the ambient `path`, preserving byte-identical behaviour.
+ *
+ * The containment DECISION here now comes from the canonical predicate in
+ * src/security.cts (`tryWithinRootLexical`, ADR-4650 decision 6) — this
+ * function keeps only the lexical RESOLUTION policy (no realpath, no
+ * filesystem access) as its own choice; the comparison itself is shared.
  */
 export function isPathConfined(
   target: string,
@@ -62,11 +68,7 @@ export function isPathConfined(
   if (typeof target !== 'string' || typeof root !== 'string' || target.length === 0 || root.length === 0) {
     return false;
   }
-  const p = opts.pathImpl ?? path;
-  const rootResolved = p.resolve(root);
-  const targetResolved = p.resolve(root, target);
-  const prefix = rootResolved + p.sep;
-  return targetResolved === rootResolved || targetResolved.startsWith(prefix);
+  return tryWithinRootLexical(target, root, { pathImpl: opts.pathImpl }) !== null;
 }
 
 export interface DescriptorArtifactKind {

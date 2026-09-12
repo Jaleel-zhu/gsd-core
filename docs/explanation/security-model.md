@@ -162,10 +162,19 @@ module is the central security utility. It provides:
 - Shell argument validation: arguments passed to subshell commands are
   validated before use
 
-Three containment checks elsewhere in the tree are deliberately NOT routed through
-this predicate, because each is narrower or stricter rather than a second opinion.
-The common thread is that a realpath-based predicate is the wrong tool wherever a
-symlink must be *preserved* rather than resolved.
+Containment is decided in exactly one place, but resolved two ways. The
+comparison itself — separator-aware, so a sibling merely sharing a prefix is
+never accepted — is internal to `security.cjs` and is the single decision. Two
+exported families sit on it and differ only in how a candidate is resolved
+before that decision: `assertWithinRoot` / `tryWithinRoot` resolve symlinks,
+and `assertWithinRootLexical` / `tryWithinRootLexical` use string resolution
+alone and never touch the filesystem.
+
+The lexical form exists because a realpath-based predicate is the wrong tool
+wherever a symlink must be *preserved* rather than resolved, or where the target
+legitimately does not exist yet. A lexical check **cannot see a symlink**, so a
+caller relying on one for a write-confinement guarantee must pair it with its
+own symlink refusal. Three call sites use it, each for a stated reason.
 
 The backup-restore gate in `gsd-core/bin/gsd-tools.cjs` rejects symlinks outright:
 the canonical predicate accepts a link whose target resolves inside the root, but

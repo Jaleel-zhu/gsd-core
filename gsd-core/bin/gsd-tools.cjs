@@ -3359,16 +3359,22 @@ function dispatchOverlayCapabilityCommand({ command, args, cwd, raw, error, load
   // at the backed-up path. These checks reject links outright, which is
   // strictly stricter than assertWithinRoot/tryWithinRoot, not a
   // reimplementation of them. Do not "simplify" this to assertWithinRoot or
-  // tryWithinRoot. Reviewed under epic #4636 Phase 3 and deliberately NOT
-  // collapsed. Note also: isInsideDir below treats target === root as NOT
-  // contained (it requires a non-empty relative path), unlike every other
-  // containment implementation in this repo, which treats target === root as
-  // contained.
+  // tryWithinRoot. Reviewed under epic #4636 Phase 3: the containment
+  // DECISION now routes through the canonical lexical predicate
+  // (`tryWithinRootLexical`, ADR-4650 decision 6); isInsideDir below still
+  // treats target === root as NOT contained via its own extra `!==` check
+  // (unlike every other containment implementation in this repo, which
+  // treats target === root as contained) — that condition is this gate's
+  // own and is layered on top of the shared predicate, not folded into it.
 
   /** True when `target` resolves strictly inside `root`. */
   function isInsideDir(root, target) {
-    const rel = path.relative(path.resolve(root), path.resolve(target));
-    return rel !== '' && !rel.startsWith('..') && !path.isAbsolute(rel);
+    // Containment decision: canonical lexical predicate (ADR-4650 decision 6).
+    // The extra `!==` condition is this gate's own: a restore must never
+    // target the config directory itself, only something strictly inside it.
+    if (path.resolve(target) === path.resolve(root)) return false;
+    const { tryWithinRootLexical } = require('./lib/security.cjs');
+    return tryWithinRootLexical(target, root) !== null;
   }
 
   /**

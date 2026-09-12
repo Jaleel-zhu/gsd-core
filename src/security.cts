@@ -25,6 +25,27 @@ import path from 'node:path';
 // ─── Path Traversal Prevention ──────────────────────────────────────────────
 
 /**
+ * THE containment comparison — the single place this repo decides whether an
+ * already-resolved path lies inside an already-resolved root (ADR-4650).
+ *
+ * Separator-aware on purpose: comparing the bare strings would accept a
+ * sibling that merely shares a prefix (`<root>-evil` against `<root>`), so both
+ * sides get a trailing separator before the prefix test. `target === root` is
+ * contained.
+ *
+ * `pathImpl` lets a caller supply `path.win32` / `path.posix` instead of the
+ * ambient module, so win32 separator semantics are testable off Windows.
+ */
+function isContainedIn(
+  resolvedTarget: string,
+  resolvedRoot: string,
+  pathImpl: { sep: string } = path,
+): boolean {
+  if (resolvedTarget === resolvedRoot) return true;
+  return (resolvedTarget + pathImpl.sep).startsWith(resolvedRoot + pathImpl.sep);
+}
+
+/**
  * Validate that a file path resolves within an allowed base directory.
  * Prevents path traversal attacks via ../ sequences, symlinks, or absolute paths.
  */
@@ -102,9 +123,7 @@ function validatePath(filePath: unknown, baseDir: unknown, opts: { allowAbsolute
       }
     }
   }
-  const normalizedBase = resolvedBase + path.sep;
-  const normalizedPath = resolvedPath + path.sep;
-  if (resolvedPath !== resolvedBase && !normalizedPath.startsWith(normalizedBase)) {
+  if (!isContainedIn(resolvedPath, resolvedBase)) {
     return {
       safe: false,
       resolved: resolvedPath,
@@ -259,6 +278,59 @@ export function tryWithinRoot(candidate: unknown, root: unknown, policy: PathAcc
  */
 export function requireSafePath(filePath: unknown, baseDir: unknown, label: string | null | undefined, policy: PathAcceptancePolicy = PathAcceptance.RelativeOnly): ContainedPath {
   return assertWithinRoot(filePath, baseDir, label, policy);
+}
+
+/**
+ * LEXICAL containment — `path.resolve` only, never any filesystem access.
+ *
+ * Shares `isContainedIn` with the realpath-based predicate, so there is ONE
+ * containment decision in this repo; these differ only in how a path is
+ * RESOLVED before that decision, never in the decision itself (ADR-4650
+ * decisions 1 and 6).
+ *
+ * Use this — and say why at the call site — only where a symlink must be
+ * PRESERVED rather than resolved, or where the target legitimately does not
+ * exist yet. Three such cases exist: a destination validated before the
+ * `mkdirSync` that creates it, a migration that snapshots and restores a
+ * symlinked path AS A LINK, and a restore gate that refuses links outright.
+ * Everywhere else the realpath-based `assertWithinRoot` / `tryWithinRoot` is
+ * the correct predicate, because a lexical check CANNOT SEE A SYMLINK: a
+ * caller relying on one for a write-confinement guarantee must pair it with
+ * its own symlink refusal.
+ *
+ * `candidate` is resolved RELATIVE TO `root` (so an absolute candidate is
+ * taken as-is, matching `path.resolve` semantics). `target === root` is
+ * contained.
+ *
+ * DELIBERATELY ABSENT: no NUL-byte rejection here. The existing lexical
+ * callers do not reject NUL at this layer (one of them checks NUL itself,
+ * separately), and adding it here would change their behavior. Callers that
+ * need it keep their own check.
+ */
+export function tryWithinRootLexical(
+  candidate: unknown,
+  root: unknown,
+  opts: { pathImpl?: { resolve(...segments: string[]): string; sep: string } } = {},
+): ContainedPath | null {
+  const p = opts.pathImpl || path;
+  if (typeof candidate !== 'string' || candidate === '') return null;
+  if (typeof root !== 'string' || root === '') return null;
+  const rootResolved = p.resolve(root);
+  const targetResolved = p.resolve(root, candidate);
+  return isContainedIn(targetResolved, rootResolved, p) ? (targetResolved as ContainedPath) : null;
+}
+
+export function assertWithinRootLexical(
+  candidate: unknown,
+  root: unknown,
+  label?: string | null,
+  opts: { pathImpl?: { resolve(...segments: string[]): string; sep: string } } = {},
+): ContainedPath {
+  const contained = tryWithinRootLexical(candidate, root, opts);
+  if (contained === null) {
+    throw new Error(`${label || 'Path'} validation failed: lexical containment check failed`);
+  }
+  return contained;
 }
 
 // ─── Prompt Injection Detection ────────────────────────────────────────────────────
