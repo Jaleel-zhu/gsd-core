@@ -30,7 +30,7 @@ import type { Decision } from './decisions.cjs';
 import frontmatterMod = require('./frontmatter.cjs');
 const { extractFrontmatter } = frontmatterMod;
 import { stripFencedCode, collectSections } from './markdown-sectionizer.cjs';
-import { tryWithinRoot } from './security.cjs';
+import { tryWithinRoot, PathAcceptance } from './security.cjs';
 import { checkUiPresence } from './ui-safety-gate.cjs';
 import { hasStaticFrontendEvidence } from './ui-frontend-evidence.cjs';
 // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -97,7 +97,7 @@ function readIfExists(filePath: string): string {
 
 function resolvePath(inputPath: string, projectDir: string): string {
   const candidate = path.isAbsolute(inputPath) ? inputPath : path.join(projectDir, inputPath);
-  const contained = tryWithinRoot(candidate, projectDir, { allowAbsolute: true });
+  const contained = tryWithinRoot(candidate, projectDir, PathAcceptance.AbsoluteInsideRoot);
   if (contained === null) {
     error(`path escapes its allowed directory: ${inputPath}`, ERROR_REASON.USAGE);
   }

@@ -25,6 +25,7 @@ const {
   validatePromptStructure,
   assertWithinRoot,
   tryWithinRoot,
+  PathAcceptance,
 } = require('../gsd-core/bin/lib/security.cjs');
 
 // ─── Path Traversal Prevention ──────────────────────────────────────────────
@@ -58,12 +59,12 @@ describe('assertWithinRoot / tryWithinRoot — engine invariance', () => {
   });
 
   test('allows absolute paths within base when opted in', () => {
-    const r = tryWithinRoot(path.join(base, 'src/file.js'), base, { allowAbsolute: true });
+    const r = tryWithinRoot(path.join(base, 'src/file.js'), base, PathAcceptance.AbsoluteInsideRoot);
     assert.ok(r !== null);
   });
 
   test('rejects absolute paths outside base even when opted in', () => {
-    assert.equal(tryWithinRoot('/etc/passwd', base, { allowAbsolute: true }), null);
+    assert.equal(tryWithinRoot('/etc/passwd', base, PathAcceptance.AbsoluteInsideRoot), null);
   });
 
   test('rejects null bytes', () => {
@@ -1367,7 +1368,7 @@ describe('assertWithinRoot / tryWithinRoot — narrowed export (#4653)', () => {
     });
 
     test('returns the resolved path for an absolute input INSIDE the root when {allowAbsolute:true}', () => {
-      const resolved = assertWithinRoot(path.join(base, 'src/file.js'), base, null, { allowAbsolute: true });
+      const resolved = assertWithinRoot(path.join(base, 'src/file.js'), base, null, PathAcceptance.AbsoluteInsideRoot);
       assert.equal(resolved, path.resolve(base, 'src/file.js'));
     });
 
@@ -1376,7 +1377,7 @@ describe('assertWithinRoot / tryWithinRoot — narrowed export (#4653)', () => {
     });
 
     test('throws on an absolute path outside the root even with {allowAbsolute:true}', () => {
-      assert.throws(() => assertWithinRoot('/etc/passwd', base, null, { allowAbsolute: true }));
+      assert.throws(() => assertWithinRoot('/etc/passwd', base, null, PathAcceptance.AbsoluteInsideRoot));
     });
 
     test('throws on a null byte', () => {
@@ -1406,7 +1407,7 @@ describe('assertWithinRoot / tryWithinRoot — narrowed export (#4653)', () => {
     });
 
     test('returns the resolved path for an absolute input INSIDE the root when {allowAbsolute:true}', () => {
-      const resolved = tryWithinRoot(path.join(base, 'src/file.js'), base, { allowAbsolute: true });
+      const resolved = tryWithinRoot(path.join(base, 'src/file.js'), base, PathAcceptance.AbsoluteInsideRoot);
       assert.equal(resolved, path.resolve(base, 'src/file.js'));
     });
 
@@ -1416,7 +1417,7 @@ describe('assertWithinRoot / tryWithinRoot — narrowed export (#4653)', () => {
     });
 
     test('returns exactly null for an absolute path outside the root even with {allowAbsolute:true}', () => {
-      const result = tryWithinRoot('/etc/passwd', base, { allowAbsolute: true });
+      const result = tryWithinRoot('/etc/passwd', base, PathAcceptance.AbsoluteInsideRoot);
       assert.strictEqual(result, null);
     });
 

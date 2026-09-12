@@ -11,7 +11,7 @@ import path from 'node:path';
 import { normalizeEol } from './text-lines.cjs';
 import { execGit, platformWriteSync, platformReadSync, platformEnsureDir, isSpawnTimeout, retryRenameSync } from './shell-command-projection.cjs';
 import { escapeRegex } from './pattern.cjs';
-import { requireSafePath, sanitizeForDisplay, tryWithinRoot } from './security.cjs';
+import { requireSafePath, sanitizeForDisplay, tryWithinRoot, PathAcceptance } from './security.cjs';
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 import ioMod = require('./io.cjs');
 const { output, ERROR_REASON } = ioMod;
@@ -352,7 +352,7 @@ function cmdListSeeds(cwd: string, statusFilter: string | undefined, raw: boolea
 
     let safeFilePath: string;
     try {
-      safeFilePath = requireSafePath(path.join(seedsDir, entry.name), planDir, 'seed file', { allowAbsolute: true });
+      safeFilePath = requireSafePath(path.join(seedsDir, entry.name), planDir, 'seed file', PathAcceptance.AbsoluteInsideRoot);
     } catch {
       continue;
     }
@@ -3517,11 +3517,11 @@ function cmdTodoComplete(cwd: string, filename: string | undefined, options: Tod
   const sourcePath = path.join(pendingDir, filename);
   const targetPath = path.join(completedDir, filename);
 
-  const sourceContained = tryWithinRoot(sourcePath, todosRoot, { allowAbsolute: true });
+  const sourceContained = tryWithinRoot(sourcePath, todosRoot, PathAcceptance.AbsoluteInsideRoot);
   if (sourceContained === null) {
     error(`todo file escapes its allowed directory: ${filename}`, ERROR_REASON.USAGE);
   }
-  const targetContained = tryWithinRoot(targetPath, todosRoot, { allowAbsolute: true });
+  const targetContained = tryWithinRoot(targetPath, todosRoot, PathAcceptance.AbsoluteInsideRoot);
   if (targetContained === null) {
     error(`todo file escapes its allowed directory: ${filename}`, ERROR_REASON.USAGE);
   }

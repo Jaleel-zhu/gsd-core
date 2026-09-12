@@ -35,7 +35,7 @@ function runGsdToolsWithStderr(args, cwd, env) {
   };
 }
 
-const { loadTrustedGlobalRoots, tryWithinRoot } = require('../gsd-core/bin/lib/security.cjs');
+const { loadTrustedGlobalRoots, tryWithinRoot, PathAcceptance } = require('../gsd-core/bin/lib/security.cjs');
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
 
@@ -915,21 +915,21 @@ describe('trusted_global_roots guard logic', () => {
 
   test('tryWithinRoot rejects skill outside globalSkillsBase (baseline — no trusted roots)', () => {
     const skillMd = path.join(externalDir, 'SKILL.md');
-    const result = tryWithinRoot(skillMd, tmpDir, { allowAbsolute: true });
+    const result = tryWithinRoot(skillMd, tmpDir, PathAcceptance.AbsoluteInsideRoot);
     assert.equal(result, null, 'skill outside base must be rejected by tryWithinRoot');
   });
 
   test('with trusted root matching real target dir — tryWithinRoot accepts', () => {
     // Simulate the trusted-root fallback: skill is outside base but inside trusted root
     const skillMd = path.join(externalDir, 'SKILL.md');
-    const baseCheck = tryWithinRoot(skillMd, tmpDir, { allowAbsolute: true });
+    const baseCheck = tryWithinRoot(skillMd, tmpDir, PathAcceptance.AbsoluteInsideRoot);
     assert.equal(baseCheck, null, 'base check must fail (prerequisite)');
 
     // Trusted root fallback: check against externalDir
     const config = { agent_skills_security: { trusted_global_roots: [externalDir] } };
     const trustedRoots = loadTrustedGlobalRoots(config);
     const acceptedViaTrustedRoot = trustedRoots.some((root) => {
-      const rootCheck = tryWithinRoot(skillMd, root, { allowAbsolute: true });
+      const rootCheck = tryWithinRoot(skillMd, root, PathAcceptance.AbsoluteInsideRoot);
       return rootCheck !== null;
     });
     assert.ok(acceptedViaTrustedRoot, 'skill must be accepted when within a trusted root');
@@ -942,7 +942,7 @@ describe('trusted_global_roots guard logic', () => {
       const config = { agent_skills_security: { trusted_global_roots: [unrelatedDir] } };
       const trustedRoots = loadTrustedGlobalRoots(config);
       const acceptedViaTrustedRoot = trustedRoots.some((root) => {
-        const rootCheck = tryWithinRoot(skillMd, root, { allowAbsolute: true });
+        const rootCheck = tryWithinRoot(skillMd, root, PathAcceptance.AbsoluteInsideRoot);
         return rootCheck !== null;
       });
       assert.ok(!acceptedViaTrustedRoot, 'skill must still be rejected when trusted root is unrelated');
@@ -957,7 +957,7 @@ describe('trusted_global_roots guard logic', () => {
     const trustedRoots = loadTrustedGlobalRoots(config);
     assert.strictEqual(trustedRoots.length, 0, 'no roots loaded');
     const acceptedViaTrustedRoot = trustedRoots.some((root) => {
-      const rootCheck = tryWithinRoot(skillMd, root, { allowAbsolute: true });
+      const rootCheck = tryWithinRoot(skillMd, root, PathAcceptance.AbsoluteInsideRoot);
       return rootCheck !== null;
     });
     assert.ok(!acceptedViaTrustedRoot, 'skill must be rejected when trusted roots is empty');

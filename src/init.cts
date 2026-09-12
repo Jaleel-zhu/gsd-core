@@ -44,7 +44,7 @@ import { formatGsdSlash, resolveRuntime } from './runtime-slash.cjs';
 import { resolveReportedRuntime } from './host-runtime-detection.cjs';
 // eslint-disable-next-line @typescript-eslint/no-require-imports -- commands.cjs is an export= CommonJS module
 import commandsMod = require('./commands.cjs');
-import { tryWithinRoot, loadTrustedGlobalRoots } from './security.cjs';
+import { tryWithinRoot, loadTrustedGlobalRoots, PathAcceptance } from './security.cjs';
 import { getGlobalSkillDir, getGlobalSkillDisplayPath, getGlobalSkillsBase, getGlobalConfigDir } from './runtime-homes.cjs';
 // eslint-disable-next-line @typescript-eslint/no-require-imports -- frontmatter.cjs is an export= CommonJS module
 import frontmatterMod = require('./frontmatter.cjs');
@@ -4015,10 +4015,10 @@ function buildAgentSkillsBlock(
         );
         continue;
       }
-      const globalSkillMdContained = tryWithinRoot(globalSkillMd, globalSkillsBase, { allowAbsolute: true });
+      const globalSkillMdContained = tryWithinRoot(globalSkillMd, globalSkillsBase, PathAcceptance.AbsoluteInsideRoot);
       if (globalSkillMdContained === null) {
         const acceptedViaTrustedRoot = trustedGlobalRoots.some((root) => {
-          return tryWithinRoot(globalSkillMd, root, { allowAbsolute: true }) !== null;
+          return tryWithinRoot(globalSkillMd, root, PathAcceptance.AbsoluteInsideRoot) !== null;
         });
         if (!acceptedViaTrustedRoot) {
           warn(

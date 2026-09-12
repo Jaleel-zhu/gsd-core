@@ -197,11 +197,36 @@ export function loadTrustedGlobalRoots(config: unknown): string[] {
 export type ContainedPath = string & { readonly __containedIn: unique symbol };
 
 /**
+ * Named acceptance policy for what kind of candidate path is even considered.
+ *
+ * This replaces the old per-call-site `{ allowAbsolute: true }` boolean flag.
+ * At a call site, `{ allowAbsolute: true }` reads as "containment is relaxed
+ * here" — which is FALSE. An absolute path that resolves OUTSIDE the root is
+ * still rejected; the flag only ever controlled whether an absolute candidate
+ * was considered at all. `AbsoluteInsideRoot` states the real contract: an
+ * absolute candidate is accepted for consideration, but containment is
+ * enforced exactly as it is for a relative one.
+ */
+export const PathAcceptance = {
+  /** Relative candidates only; an absolute candidate is rejected outright. */
+  RelativeOnly: 'relative-only',
+  /**
+   * An absolute candidate is accepted — but ONLY if it still resolves inside the
+   * root. Containment is NOT relaxed by this policy; an absolute path outside the
+   * root is rejected exactly as a traversal is. This is the distinction the old
+   * `{ allowAbsolute: true }` flag failed to make at its call sites.
+   */
+  AbsoluteInsideRoot: 'absolute-inside-root',
+} as const;
+
+export type PathAcceptancePolicy = (typeof PathAcceptance)[keyof typeof PathAcceptance];
+
+/**
  * Validate a file path and throw on traversal attempt.
  * Convenience wrapper around validatePath for use in CLI commands.
  */
-export function assertWithinRoot(candidate: unknown, root: unknown, label?: string | null, opts: { allowAbsolute?: boolean } = {}): ContainedPath {
-  const result = validatePath(candidate, root, opts);
+export function assertWithinRoot(candidate: unknown, root: unknown, label?: string | null, policy: PathAcceptancePolicy = PathAcceptance.RelativeOnly): ContainedPath {
+  const result = validatePath(candidate, root, { allowAbsolute: policy === PathAcceptance.AbsoluteInsideRoot });
   if (!result.safe) {
     throw new Error(`${label || 'Path'} validation failed: ${result.error}`);
   }
@@ -216,8 +241,8 @@ export function assertWithinRoot(candidate: unknown, root: unknown, label?: stri
  * traversal branch, so returning it here would reproduce the defect this
  * narrowing exists to remove.
  */
-export function tryWithinRoot(candidate: unknown, root: unknown, opts: { allowAbsolute?: boolean } = {}): ContainedPath | null {
-  const result = validatePath(candidate, root, opts);
+export function tryWithinRoot(candidate: unknown, root: unknown, policy: PathAcceptancePolicy = PathAcceptance.RelativeOnly): ContainedPath | null {
+  const result = validatePath(candidate, root, { allowAbsolute: policy === PathAcceptance.AbsoluteInsideRoot });
   if (!result.safe) {
     return null;
   }
@@ -232,8 +257,8 @@ export function tryWithinRoot(candidate: unknown, root: unknown, opts: { allowAb
  * names; its declared return type is ContainedPath (a branded string, still
  * assignable to string) so existing callers keep compiling untouched.
  */
-export function requireSafePath(filePath: unknown, baseDir: unknown, label: string | null | undefined, opts: { allowAbsolute?: boolean } = {}): ContainedPath {
-  return assertWithinRoot(filePath, baseDir, label, opts);
+export function requireSafePath(filePath: unknown, baseDir: unknown, label: string | null | undefined, policy: PathAcceptancePolicy = PathAcceptance.RelativeOnly): ContainedPath {
+  return assertWithinRoot(filePath, baseDir, label, policy);
 }
 
 // ─── Prompt Injection Detection ────────────────────────────────────────────────────
