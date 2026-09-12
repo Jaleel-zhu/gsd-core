@@ -37,6 +37,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const { ExitError, runMain } = require('./lib/cli-exit.cjs');
+const { tryWithinRoot, PathAcceptance } = require('../gsd-core/bin/lib/security.cjs');
 
 const ROOT = path.resolve(__dirname, '..');
 const CONTEXT_PATH = path.join(ROOT, 'CONTEXT.md');
@@ -132,20 +133,6 @@ function isTracked(token) {
 }
 
 /**
- * True if joining `token` to ROOT stays inside ROOT. `PATH_TOKEN_RE` admits `.`
- * inside a segment, so a token like `src/../../../etc/passwd` matches and (via
- * the `src/` prefix) reads as "tracked" — `path.join(ROOT, token)` would then
- * normalize to an out-of-tree absolute path and `fs.existsSync` would probe it,
- * turning a doc lint into a filesystem-existence oracle on the CI host. A
- * CONTEXT.md reference is always a plain in-repo path, so a `..` escape is never
- * legitimate: confine to ROOT and drop anything that climbs out.
- */
-function isWithinRoot(token) {
-  const resolved = path.resolve(ROOT, token);
-  return resolved === ROOT || resolved.startsWith(ROOT + path.sep);
-}
-
-/**
  * Every distinct, trackable file-path token referenced in `text`, with any
  * trailing `:<line>` suffix stripped.
  *
@@ -177,7 +164,8 @@ function extractTrackedRefs(text) {
     if (!/[A-Za-z0-9_]$/.test(token)) return;
     if (token.includes('NNNN')) return;
     if (!isTracked(token)) return;
-    if (!isWithinRoot(token)) return;
+    // Containment decision is the canonical predicate's, per ADR-4650.
+    if (tryWithinRoot(token, ROOT, PathAcceptance.AbsoluteInsideRoot) === null) return;
     tokens.add(token);
   };
   const subTokenRe = /[\w.-]+(?:\/[\w.-]+)*/g;

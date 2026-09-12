@@ -19,6 +19,7 @@ import {
 import { platformWriteSync, retryRenameSync, posixNormalize } from './shell-command-projection.cjs';
 import { realClock, type Clock } from './clock.cjs';
 import { isInstallScopeId, type InstallScope } from './install-scope.cjs';
+import { tryWithinRoot, PathAcceptance } from './security.cjs';
 // #2874 (ADR-58 cleanup phase): this file is the ~1200-line migration
 // plan/apply/rollback/lock/journal engine — almost none of it is on the
 // installRuntimeArtifacts call tree. Only `readInstallManifest` and
@@ -666,9 +667,16 @@ interface EnsureInsideConfigResult {
 
 function ensureInsideConfig(configDir: string, relPath: string): EnsureInsideConfigResult {
   const normalized = normalizeRelPath(relPath);
+  // fullPath stays the LEXICAL path.resolve result (not the canonical
+  // predicate's realpath-resolved value): both callers (readJson's
+  // ensureInsideConfig call and the migration-apply loop) use fullPath for
+  // fs.existsSync checks and journal entries, and those must not shift if
+  // configDir happens to be a symlink. Per ADR-4650 decision 6, the
+  // containment DECISION (whether fullPath is inside configDir) is owned by
+  // the canonical predicate — this wrapper only decides how to degrade
+  // (throw with this file's existing message), never whether contained.
   const fullPath = path.resolve(configDir, normalized);
-  const root = path.resolve(configDir);
-  if (fullPath !== root && !fullPath.startsWith(root + path.sep)) {
+  if (tryWithinRoot(fullPath, configDir, PathAcceptance.AbsoluteInsideRoot) === null) {
     throw new Error(`migration path escapes configDir: ${relPath}`);
   }
   return { normalized, fullPath };

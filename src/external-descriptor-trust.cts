@@ -32,11 +32,17 @@ import path from 'node:path';
  * `root`) that would redirect the LEXICALLY-confined path to a physically
  * different, unconfined location on disk. A caller relying on this for a
  * write-confinement guarantee against a symlink-planting attacker must pair
- * it with a symlink check (or refuse to follow symlinks at write time) — see
- * capability-source.cts's install adapters (:491,577,675), which is what
- * currently keeps every caller of this function's callers symlink-safe: they
- * reject symlinks upstream, before a target ever reaches a lexical-only check
- * like this one.
+ * it with a symlink check (or refuse to follow symlinks at write time). Only
+ * the capability-loader.cts route into assertDescriptorConfined gets this for
+ * free today: capability-source.cts's staging path rejects symlinks upstream,
+ * before a target ever reaches a lexical-only check like this one — see
+ * copyDirRecursive's `entry.isSymbolicLink()` throw (capability-source.cts:585-586)
+ * and the post-copy budget-walk re-check (capability-source.cts:671-674). This
+ * does NOT extend to isPathConfined's other callers: install-engine.cts:1608
+ * and install-profiles.cts:755,880 do not go through capability-source.cts's
+ * adapters at all and have no symlink guard of their own here. Of the
+ * remaining callers, only retired-artifact-cleanup.cts:69 carries its own
+ * defense, via a local `lstatSync(destDir).isSymbolicLink()` check at line 77.
  *
  * `opts.pathImpl` (default: the ambient `path` module) lets a caller inject
  * `path.win32` or `path.posix`. This is security-relevant: the win32 branch
