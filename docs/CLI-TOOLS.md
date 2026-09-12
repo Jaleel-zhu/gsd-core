@@ -1177,18 +1177,19 @@ from `todos/pending/` to `todos/completed/` and upserts `completed:` and
 `status: completed` inside the file's frontmatter block. Unknown flags are
 rejected loudly.
 
-`<filename>` is a **basename inside the todos root**, not a path. A value that
-resolves outside that root — a traversal like `../../escaped` or an embedded
-separator like `sub/name.md` — is rejected as a usage error **before** any file
-is read or moved (#4327). An absolute path is handled differently: it is
-**folded under the todos root** (Node's `path.join` does not let a later
-absolute segment escape a prior one), so it cannot reach a file outside the
-root — it simply fails with the ordinary "Todo not found" error unless a file
-of that joined name happens to exist under `todos/pending/`; it is not
-rejected as a containment violation. The check covers both halves of the move,
-so neither the source nor the destination can land outside the root, and
-`--dry-run` is rejected on the same terms rather than previewing a resolved
-outside path.
+`<filename>` is a **basename inside the todos root**, not a path. A basename
+guard runs first, before `<filename>` is joined onto any directory: a value
+containing an embedded separator (either `/` or `\`, e.g. `sub/name.md` or
+`sub\name.md`), a value whose own basename differs from itself (e.g.
+`a/../../b.md`, `../sibling.md`), a bare `.` or `..`, an absolute path (e.g.
+`/etc/passwd`), or a NUL byte is rejected as a usage error **before** any file
+is read or moved (#4327, #4652). A traversal that only escapes the `pending`/
+`completed` subdirectory without leaving the todos root (`../sibling.md`) is
+caught by this same guard, not by containment. Containment against the todos
+root still runs afterward as defense-in-depth for the resolved source and
+target paths, so neither half of the move can land outside the root. The
+check covers both halves of the move, and `--dry-run` is rejected on the same
+terms rather than previewing a resolved outside path.
 
 ```bash
 # UAT audit — scan all phases for unresolved items
